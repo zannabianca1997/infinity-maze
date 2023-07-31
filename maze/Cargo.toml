@@ -4,3 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+coverages = { path = "../coverages" }
+lazy_static = "1.4.0"
+log = "0.4.19"
+rand-wyrand = "0.1.0"
+tokio = { version = "1.29.1", features = ["sync"] }

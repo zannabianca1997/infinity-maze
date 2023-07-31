@@ -169,3 +169,27 @@ impl Linearized<'_> {
         [pos as u64 % stride, pos as u64 / stride]
     }
 }
+
+/// An orthogonal line
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Side {
+    Vertical { x: i64, miny: i64, maxy: i64 },
+    Orizontal { y: i64, minx: i64, maxx: i64 },
+}
+impl Side {
+    #[inline(always)]
+    #[must_use]
+    pub const fn len(&self) -> i64 {
+        let (Side::Vertical {
+            miny: min,
+            maxy: max,
+            ..
+        }
+        | Side::Orizontal {
+            minx: min,
+            maxx: max,
+            ..
+        }) = self;
+        *max - *min
+    }
+}

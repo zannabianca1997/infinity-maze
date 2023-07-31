@@ -77,7 +77,7 @@ impl Display for Cover {
                 if *ch {
                     write!(f, "#")?;
                 } else {
-                    write!(f, " ")?;
+                    write!(f, ".")?;
                 }
             }
             writeln!(f)?;

@@ -22,12 +22,12 @@ struct Rect {
 impl Rect {
     #[inline(always)]
     #[must_use]
-    fn contains(&self, [x, y]: &[Coord; 2]) -> bool {
+    const fn contains(&self, [x, y]: &[Coord; 2]) -> bool {
         self.minx <= *x && *x < self.maxx && self.miny <= *y && *y < self.maxy
     }
     #[inline(always)]
     #[must_use]
-    fn covers(&self, other: &Rect) -> bool {
+    const fn covers(&self, other: &Rect) -> bool {
         self.minx <= other.minx
             && other.maxx <= self.maxx
             && self.miny <= other.miny
@@ -35,7 +35,7 @@ impl Rect {
     }
     #[inline(always)]
     #[must_use]
-    fn collide(&self, other: &Rect) -> bool {
+    const fn collide(&self, other: &Rect) -> bool {
         self.maxx > other.minx
             && self.minx < other.maxx
             && self.maxy > other.miny
@@ -43,7 +43,7 @@ impl Rect {
     }
     #[inline(always)]
     #[must_use]
-    fn area(&self) -> Area {
+    const fn area(&self) -> Area {
         (self.maxx - self.minx) as Area * (self.maxy - self.miny) as Area
     }
 }

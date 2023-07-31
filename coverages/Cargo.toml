@@ -4,9 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0.72"
 bincode = { version = "2.0.0-rc.3" }
 clap = { version = "4.3.19", features = ["derive"] }
+deepsize = "0.2.0"
 flate2 = "1.0.26"
+humansize = "2.1.3"
 log = "0.4.19"
 simple_logger = { version = "4.2.0", features = ["stderr"] }
-tokio = { version = "1.29.1", features = ["rt"] }
+tokio = { version = "1.29.1", features = ["rt", "macros", "rt-multi-thread"] }

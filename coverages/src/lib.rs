@@ -5,6 +5,7 @@ use std::{io, panic};
 
 use bincode::error::DecodeError;
 use bincode::{Decode, Encode};
+use deepsize::DeepSizeOf;
 use flate2::Compression;
 use flate2::{bufread, read, write};
 
@@ -12,7 +13,7 @@ pub type Coord = u8;
 pub type Area = u16;
 
 /// A rectangle
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode, DeepSizeOf)]
 pub struct Rect {
     pub minx: Coord,
     pub miny: Coord,
@@ -49,7 +50,7 @@ impl Rect {
 }
 
 /// An orthogonal line
-#[derive(Debug, Clone, Copy, Encode, Decode, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Encode, Decode, PartialEq, Eq, PartialOrd, Ord, DeepSizeOf)]
 pub enum Side {
     Vertical { x: Coord, miny: Coord, maxy: Coord },
     Orizontal { y: Coord, minx: Coord, maxx: Coord },
@@ -116,7 +117,7 @@ fn shared_sides(rects: &[Rect]) -> Box<[Box<[Option<Side>]>]> {
 }
 
 /// A cover of a NxM rectangle
-#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq, PartialOrd, Ord, DeepSizeOf)]
 pub struct Cover {
     pub shape: [Coord; 2],
     pub rects: Box<[Rect]>,
@@ -272,7 +273,7 @@ pub fn irreducibles(shape: [Coord; 2]) -> Box<[Cover]> {
     .into_boxed_slice()
 }
 
-#[derive(Debug, Clone, Encode, Decode)]
+#[derive(Debug, Clone, Encode, Decode, DeepSizeOf)]
 pub struct IrreducibleCovers {
     pub max_size: Coord,
     pub covers: BTreeMap<[Coord; 2], Box<[Cover]>>,
@@ -324,11 +325,11 @@ impl IrreducibleCovers {
         writer.finish()?;
         Ok(())
     }
-    pub fn read(&self, reader: impl io::Read) -> Result<Self, DecodeError> {
+    pub fn read(reader: impl io::Read) -> Result<Self, DecodeError> {
         let mut reader = read::DeflateDecoder::new(reader);
         bincode::decode_from_std_read(&mut reader, bincode::config::standard())
     }
-    pub fn bufread(&self, reader: impl io::BufRead) -> Result<Self, DecodeError> {
+    pub fn bufread(reader: impl io::BufRead) -> Result<Self, DecodeError> {
         let mut reader = bufread::DeflateDecoder::new(reader);
         bincode::decode_from_std_read(&mut reader, bincode::config::standard())
     }

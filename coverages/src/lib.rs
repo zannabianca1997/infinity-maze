@@ -1,23 +1,26 @@
 #![feature(iter_collect_into)]
 
-use std::{panic, io};
-use std::{collections::{BTreeSet, BTreeMap}, fmt::Display};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Display,
+};
+use std::{io, panic};
 
 use bincode::error::DecodeError;
-use bincode::{Encode,Decode};
+use bincode::{Decode, Encode};
 use flate2::Compression;
-use flate2::{read,bufread,write};
+use flate2::{bufread, read, write};
 
 pub type Coord = u8;
 pub type Area = u16;
 
 /// A rectangle
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Encode,Decode)]
-struct Rect {
-    minx: Coord,
-    miny: Coord,
-    maxx: Coord,
-    maxy: Coord,
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
+pub struct Rect {
+    pub minx: Coord,
+    pub miny: Coord,
+    pub maxx: Coord,
+    pub maxy: Coord,
 }
 impl Rect {
     #[inline(always)]
@@ -49,10 +52,10 @@ impl Rect {
 }
 
 /// A cover of a NxM rectangle
-#[derive(Debug, Clone,Encode,Decode,PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Cover {
-    shape: [Coord; 2],
-    rects: BTreeSet<Rect>,
+    pub shape: [Coord; 2],
+    pub rects: Vec<Rect>,
 }
 impl Display for Cover {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -96,46 +99,49 @@ pub fn irreducibles(shape: [Coord; 2]) -> BTreeSet<Cover> {
             .next() // the first is guarantee to be a top-left corner
             {
                 // Cover is complete 
-                None=> BTreeSet::from([Cover{shape, rects:rects.into_iter().collect()}]),
+                None=> BTreeSet::from([Cover{shape, rects}]),
                 // Need recursion
                 Some([minx,miny])=> {
                     let mut covers = BTreeSet::new();
                     for maxx in minx+1..=shape[0] {
                         'rects: for maxy in miny+1..=shape[1] {
                             let rect = Rect {minx,maxx,miny,maxy};
-                            if rects.iter().all(|r| !r.collide(&rect)) {
-                                // updating lines, checking we did not fill up a line without using it
-                                let mut x_lines = x_lines.clone();
-                                for y in rect.miny..(rect.maxy-1){
-                                    if let Some(l) = &mut x_lines[y as usize] {
-                                        *l -= rect.maxx-rect.minx;
-                                        if *l == 0 {
-                                            continue 'rects; // try next rectangle
-                                        }
+                            if rects.iter().any(|r| r.collide(&rect)) {
+                                continue 'rects;
+                            }
+
+                            // updating lines, checking we did not fill up a line without using it
+                            let mut x_lines = x_lines.clone();
+                            for y in rect.miny..(rect.maxy-1){
+                                if let Some(l) = &mut x_lines[y as usize] {
+                                    *l -= rect.maxx-rect.minx;
+                                    if *l == 0 {
+                                        continue 'rects; // try next rectangle
                                     }
                                 }
-                                if rect.miny>1 {
-                                    x_lines[rect.miny as usize -1]=None
-                                }
-                                if let Some(l) = x_lines.get_mut(rect.maxy as usize-1) {
-                                    *l=None
-                                }
-                                let mut y_lines = y_lines.clone();
-                                for x in rect.minx..(rect.maxx-1){
-                                    if let Some(l) = &mut y_lines[x as usize] {
-                                        *l -= rect.maxy-rect.miny;
-                                        if *l == 0 {
-                                            continue 'rects; // try next rectangle
-                                        }
+                            }
+                            if rect.miny>1 {
+                                x_lines[rect.miny as usize -1]=None
+                            }
+                            if let Some(l) = x_lines.get_mut(rect.maxy as usize-1) {
+                                *l=None
+                            }
+                            let mut y_lines = y_lines.clone();
+                            for x in rect.minx..(rect.maxx-1){
+                                if let Some(l) = &mut y_lines[x as usize] {
+                                    *l -= rect.maxy-rect.miny;
+                                    if *l == 0 {
+                                        continue 'rects; // try next rectangle
                                     }
                                 }
-                                if rect.minx > 1 {
-                                    y_lines[rect.minx as usize - 1] = None
-                                }
-                                if let Some(l) = y_lines.get_mut(rect.maxx as usize-1) {
-                                    *l = None
-                                }
-                                // adding the rectangle and checking for irreducibility
+                            }
+                            if rect.minx > 1 {
+                                y_lines[rect.minx as usize - 1] = None
+                            }
+                            if let Some(l) = y_lines.get_mut(rect.maxx as usize-1) {
+                                *l = None
+                            }
+                            // adding the rectangle and checking for irreducibility
                             let mut rects = rects.clone();
                             rects.push(rect);
                             for (i,r1) in rects.iter().enumerate() {    // for all possible couples
@@ -143,17 +149,17 @@ pub fn irreducibles(shape: [Coord; 2]) -> BTreeSet<Cover> {
                                     for (r1,r2) in [(r1,r2),(r2,r1)] {  // in both order
                                         // if they could form the top-lef and bottom-right angles of a rectangle
                                         // that's not the maximum one
-                                        if r2.maxx >= r1.maxx 
-                                            && r2.maxy >= r1.maxy 
-                                            && r1.miny<=r2.miny 
+                                        if r2.maxx >= r1.maxx
+                                            && r2.maxy >= r1.maxy
+                                            && r1.miny<=r2.miny
                                             && r1.minx<=r2.minx
                                             && (
                                                 // at least one side must detach from the shape side
-                                                r1.minx > 0 
+                                                r1.minx > 0
                                                 || r1.miny > 0
                                                 || r2.maxx < shape[0]
                                                 || r2.maxy < shape[1]
-                                            ) { 
+                                            ) {
                                             // Rectangle to test
                                             let suspicius_rect = Rect {
                                                 minx: r1.minx,
@@ -186,11 +192,10 @@ pub fn irreducibles(shape: [Coord; 2]) -> BTreeSet<Cover> {
                             }
                             // recursing
                             irreducibles(shape, rects, x_lines,y_lines).into_iter().collect_into(&mut covers);
-                            }
                         }
                     }
-                    covers   
-                } 
+                    covers
+                }
             }
     }
     irreducibles(
@@ -201,28 +206,27 @@ pub fn irreducibles(shape: [Coord; 2]) -> BTreeSet<Cover> {
     )
 }
 
-
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct IrreducibleCovers {
-    max_size: Coord,
-    covers: BTreeMap<[Coord;2], BTreeSet<Cover>>
+    pub max_size: Coord,
+    pub covers: BTreeMap<[Coord; 2], BTreeSet<Cover>>,
 }
 impl IrreducibleCovers {
     #[must_use]
-    pub async fn compute_async(max_size:Coord)->Self {
+    pub async fn compute_async(max_size: Coord) -> Self {
         let mut tasks = Vec::new();
         for w in 1..=max_size {
             for h in 1..=w {
-                tasks.push(tokio::spawn( async move { 
+                tasks.push(tokio::spawn(async move {
                     log::info!("Calculating covers {w}x{h}");
-                    let res = ([w,h],irreducibles([w,h]));
+                    let res = ([w, h], irreducibles([w, h]));
                     log::info!("Completed covers {w}x{h}");
                     res
                 }));
             }
         }
         let mut covers = BTreeMap::new();
-        for task in tasks{
+        for task in tasks {
             match task.await {
                 Ok((shape, cs)) => covers.insert(shape, cs),
                 Err(err) => panic::resume_unwind(err.into_panic()),
@@ -232,34 +236,33 @@ impl IrreducibleCovers {
     }
 
     #[must_use]
-    pub fn compute(max_size:Coord)->Self {
+    pub fn compute(max_size: Coord) -> Self {
         let mut covers = BTreeMap::new();
         for w in 1..=max_size {
             for h in 1..=w {
-                covers.insert([w,h], irreducibles([w,h]));
+                covers.insert([w, h], irreducibles([w, h]));
                 log::info!("Completed covers {w}x{h}");
             }
         }
         Self { max_size, covers }
-    } 
+    }
 
-    pub fn write(&self,  writer: impl io::Write)-> io::Result<()> {
-        let mut writer = write::DeflateEncoder::new(
-            writer,
-            Compression::best(),
-        );
-        bincode::encode_into_std_write(self, &mut writer, bincode::config::standard()).map_err(|err| match err {
-            bincode::error::EncodeError::Io { inner, .. } => inner,
-            other => panic!("IrreducibleCovers should not fail to serialize: {other}"),
-        })?;
+    pub fn write(&self, writer: impl io::Write) -> io::Result<()> {
+        let mut writer = write::DeflateEncoder::new(writer, Compression::best());
+        bincode::encode_into_std_write(self, &mut writer, bincode::config::standard()).map_err(
+            |err| match err {
+                bincode::error::EncodeError::Io { inner, .. } => inner,
+                other => panic!("IrreducibleCovers should not fail to serialize: {other}"),
+            },
+        )?;
         writer.finish()?;
         Ok(())
     }
-    pub fn read(&self,  reader: impl io::Read)-> Result<Self, DecodeError> {
+    pub fn read(&self, reader: impl io::Read) -> Result<Self, DecodeError> {
         let mut reader = read::DeflateDecoder::new(reader);
         bincode::decode_from_std_read(&mut reader, bincode::config::standard())
     }
-    pub fn bufread(&self,  reader: impl io::BufRead)-> Result<Self, DecodeError> {
+    pub fn bufread(&self, reader: impl io::BufRead) -> Result<Self, DecodeError> {
         let mut reader = bufread::DeflateDecoder::new(reader);
         bincode::decode_from_std_read(&mut reader, bincode::config::standard())
     }

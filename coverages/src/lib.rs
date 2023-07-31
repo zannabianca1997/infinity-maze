@@ -20,22 +20,29 @@ struct Rect {
     maxy: Coord,
 }
 impl Rect {
+    #[inline(always)]
+    #[must_use]
     fn contains(&self, [x, y]: &[Coord; 2]) -> bool {
         self.minx <= *x && *x < self.maxx && self.miny <= *y && *y < self.maxy
     }
+    #[inline(always)]
+    #[must_use]
     fn covers(&self, other: &Rect) -> bool {
         self.minx <= other.minx
             && other.maxx <= self.maxx
             && self.miny <= other.miny
             && other.maxy <= self.maxy
     }
+    #[inline(always)]
+    #[must_use]
     fn collide(&self, other: &Rect) -> bool {
         self.maxx > other.minx
             && self.minx < other.maxx
             && self.maxy > other.miny
             && self.miny < other.maxy
     }
-
+    #[inline(always)]
+    #[must_use]
     fn area(&self) -> Area {
         (self.maxx - self.minx) as Area * (self.maxy - self.miny) as Area
     }
@@ -201,6 +208,7 @@ pub struct IrreducibleCovers {
     covers: BTreeMap<[Coord;2], BTreeSet<Cover>>
 }
 impl IrreducibleCovers {
+    #[must_use]
     pub async fn compute_async(max_size:Coord)->Self {
         let mut tasks = Vec::new();
         for w in 1..=max_size {
@@ -223,6 +231,7 @@ impl IrreducibleCovers {
         Self { max_size, covers }
     }
 
+    #[must_use]
     pub fn compute(max_size:Coord)->Self {
         let mut covers = BTreeMap::new();
         for w in 1..=max_size {

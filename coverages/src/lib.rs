@@ -339,8 +339,6 @@ mod tests {
     mod generation {
 
         mod graph {
-            use std::convert::identity;
-
             use crate::{irreducibles, Cover, Side};
 
             #[test]

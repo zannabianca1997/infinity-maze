@@ -1,9 +1,6 @@
 #![feature(iter_collect_into)]
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt::Display,
-};
+use std::{collections::BTreeMap, fmt::Display};
 use std::{io, panic};
 
 use bincode::error::DecodeError;
@@ -51,18 +48,86 @@ impl Rect {
     }
 }
 
+/// An orthogonal line
+#[derive(Debug, Clone, Copy, Encode, Decode, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Side {
+    Vertical { x: Coord, miny: Coord, maxy: Coord },
+    Orizontal { y: Coord, minx: Coord, maxx: Coord },
+}
+impl Side {
+    #[inline(always)]
+    #[must_use]
+    pub const fn len(&self) -> Coord {
+        let (Side::Vertical {
+            miny: min,
+            maxy: max,
+            ..
+        }
+        | Side::Orizontal {
+            minx: min,
+            maxx: max,
+            ..
+        }) = self;
+        *max - *min
+    }
+}
+
+fn shared_sides(rects: &[Rect]) -> Box<[Box<[Option<Side>]>]> {
+    let mut graph =
+        vec![vec![None; rects.len()].into_boxed_slice(); rects.len()].into_boxed_slice();
+
+    for i in 0..rects.len() {
+        for j in 0..i {
+            let r1 = &rects[i];
+            let r2 = &rects[j];
+            let s = if r1.maxx == r2.minx && r1.miny < r2.maxy && r2.miny < r1.maxy {
+                Some(Side::Vertical {
+                    x: r1.maxx,
+                    miny: Coord::max(r1.miny, r2.miny),
+                    maxy: Coord::min(r1.maxy, r2.maxy),
+                })
+            } else if r2.maxx == r1.minx && r1.miny < r2.maxy && r2.miny < r1.maxy {
+                Some(Side::Vertical {
+                    x: r2.maxx,
+                    miny: Coord::max(r1.miny, r2.miny),
+                    maxy: Coord::min(r1.maxy, r2.maxy),
+                })
+            } else if r1.maxy == r2.miny && r1.minx < r2.maxx && r2.minx < r1.maxx {
+                Some(Side::Orizontal {
+                    y: r1.maxy,
+                    minx: Coord::max(r1.minx, r2.minx),
+                    maxx: Coord::min(r1.maxx, r2.maxx),
+                })
+            } else if r2.maxy == r1.miny && r1.minx < r2.maxx && r2.minx < r1.maxx {
+                Some(Side::Orizontal {
+                    y: r2.maxy,
+                    minx: Coord::max(r1.minx, r2.minx),
+                    maxx: Coord::min(r1.maxx, r2.maxx),
+                })
+            } else {
+                None
+            };
+            graph[i][j] = s;
+            graph[j][i] = s;
+        }
+    }
+
+    graph
+}
+
 /// A cover of a NxM rectangle
 #[derive(Debug, Clone, Encode, Decode, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Cover {
     pub shape: [Coord; 2],
-    pub rects: Vec<Rect>,
+    pub rects: Box<[Rect]>,
+    pub shared_sides: Box<[Box<[Option<Side>]>]>,
 }
 impl Display for Cover {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let stride = self.shape[0] as usize * 2 + 1;
         let mut screen = vec![false; stride * (self.shape[1] as usize * 2 + 1)].into_boxed_slice();
         let rows = screen.chunks_mut(stride).collect::<Box<_>>();
-        for r in &self.rects {
+        for r in self.rects.iter() {
             for x in (2 * r.minx as usize)..(2 * r.maxx as usize + 1) {
                 rows[2 * r.miny as usize][x] = true;
                 rows[2 * r.maxy as usize][x] = true;
@@ -86,23 +151,23 @@ impl Display for Cover {
     }
 }
 
-pub fn irreducibles(shape: [Coord; 2]) -> BTreeSet<Cover> {
+pub fn irreducibles(shape: [Coord; 2]) -> Box<[Cover]> {
     fn irreducibles(
         shape: [Coord; 2],
         rects: Vec<Rect>,
         x_lines: Vec<Option<Coord>>,
         y_lines: Vec<Option<Coord>>,
-    ) -> BTreeSet<Cover> {
+    ) -> Vec<Cover> {
         match (0..shape[0])
             .flat_map(|x| (0..shape[1]).map(move |y| [x, y]))
             .filter(|pos| rects.iter().all(|r| !r.contains(pos)))
             .next() // the first is guarantee to be a top-left corner
             {
                 // Cover is complete 
-                None=> BTreeSet::from([Cover{shape, rects}]),
+                None=> vec![Cover{shape, shared_sides:shared_sides(&rects),rects:rects.into_boxed_slice()}],
                 // Need recursion
                 Some([minx,miny])=> {
-                    let mut covers = BTreeSet::new();
+                    let mut covers = vec![];
                     for maxx in minx+1..=shape[0] {
                         'rects: for maxy in miny+1..=shape[1] {
                             let rect = Rect {minx,maxx,miny,maxy};
@@ -191,7 +256,7 @@ pub fn irreducibles(shape: [Coord; 2]) -> BTreeSet<Cover> {
                                 }
                             }
                             // recursing
-                            irreducibles(shape, rects, x_lines,y_lines).into_iter().collect_into(&mut covers);
+                            covers.append(&mut irreducibles(shape, rects, x_lines,y_lines));
                         }
                     }
                     covers
@@ -204,12 +269,13 @@ pub fn irreducibles(shape: [Coord; 2]) -> BTreeSet<Cover> {
         vec![Some(shape[0]); shape[1] as usize - 1],
         vec![Some(shape[1]); shape[0] as usize - 1],
     )
+    .into_boxed_slice()
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct IrreducibleCovers {
     pub max_size: Coord,
-    pub covers: BTreeMap<[Coord; 2], BTreeSet<Cover>>,
+    pub covers: BTreeMap<[Coord; 2], Box<[Cover]>>,
 }
 impl IrreducibleCovers {
     #[must_use]
@@ -270,31 +336,108 @@ impl IrreducibleCovers {
 
 #[cfg(test)]
 mod tests {
-    mod all_covers {
-        use crate::irreducibles;
+    mod generation {
 
-        #[test]
-        fn one_by_one() {
-            assert_eq!(irreducibles([1, 1]).len(), 1)
+        mod graph {
+            use std::convert::identity;
+
+            use crate::{irreducibles, Cover, Side};
+
+            #[test]
+            fn one_by_one() {
+                let covers = irreducibles([1, 1]);
+                let [Cover{shared_sides,..}] = &covers[..] else {unreachable!()};
+                assert_eq!(shared_sides.len(), 1);
+                assert_eq!(shared_sides[0].len(), 1);
+                assert_eq!(shared_sides[0][0], None);
+            }
+
+            #[test]
+            fn one_by_two() {
+                let covers = irreducibles([1, 2]);
+                let [Cover{shared_sides,..}] = &covers[..] else {unreachable!()};
+                assert_eq!(shared_sides.len(), 2);
+                assert_eq!(shared_sides[0].len(), 2);
+                assert_eq!(shared_sides[0][0], shared_sides[1][1]);
+                assert_eq!(shared_sides[0][0], None);
+                assert_eq!(shared_sides[0][1], shared_sides[1][0]);
+                assert_eq!(
+                    shared_sides[0][1],
+                    Some(Side::Orizontal {
+                        y: 1,
+                        minx: 0,
+                        maxx: 1
+                    })
+                );
+            }
+
+            #[test]
+            fn two_by_one() {
+                let covers = irreducibles([2, 1]);
+                let [Cover{shared_sides,..}] = &covers[..] else {unreachable!()};
+                assert_eq!(shared_sides.len(), 2);
+                assert_eq!(shared_sides[0].len(), 2);
+                assert_eq!(shared_sides[0][0], shared_sides[1][1]);
+                assert_eq!(shared_sides[0][0], None);
+                assert_eq!(shared_sides[0][1], shared_sides[1][0]);
+                assert_eq!(
+                    shared_sides[0][1],
+                    Some(Side::Vertical {
+                        x: 1,
+                        miny: 0,
+                        maxy: 1
+                    })
+                );
+            }
+
+            #[test]
+            fn three_by_three() {
+                let covers = irreducibles([3, 3]);
+                let [Cover{shared_sides:ss1,..},Cover{shared_sides:ss2,..}] = &covers[..] else {unreachable!()};
+                for shared_sides in [ss1, ss2] {
+                    assert_eq!(shared_sides.len(), 5);
+                    for i in 0..5 {
+                        assert_eq!(shared_sides[i].len(), 5);
+                        for j in 0..5 {
+                            assert_eq!(shared_sides[i][j], shared_sides[j][i])
+                        }
+                    }
+
+                    let sides = shared_sides
+                        .into_iter()
+                        .flat_map(|l| l.into_iter())
+                        .filter_map(|x| *x)
+                        .collect::<Vec<_>>();
+                    assert_eq!(sides.len(), 2 * 8);
+                    assert!(sides.iter().all(|s| s.len() == 1))
+                }
+            }
         }
-        #[test]
-        fn one_by_two() {
-            assert_eq!(irreducibles([1, 2]).len(), 1);
-            assert_eq!(irreducibles([2, 1]).len(), 1)
-        }
-        #[test]
-        fn two_by_two() {
-            assert_eq!(irreducibles([2, 2]).len(), 0)
-        }
-        #[test]
-        fn two_by_three() {
-            assert_eq!(irreducibles([2, 3]).len(), 0);
-            assert_eq!(irreducibles([3, 2]).len(), 0)
-        }
-        #[test]
-        fn three_by_three() {
-            assert_eq!(irreducibles([3, 3]).len(), 2);
-            assert_eq!(irreducibles([3, 3]).len(), 2)
+        mod counts {
+            use crate::irreducibles;
+
+            #[test]
+            fn one_by_two() {
+                assert_eq!(irreducibles([1, 2]).len(), 1);
+                assert_eq!(irreducibles([2, 1]).len(), 1);
+            }
+
+            #[test]
+            fn two_by_two() {
+                assert_eq!(irreducibles([2, 2]).len(), 0)
+            }
+
+            #[test]
+            fn two_by_three() {
+                assert_eq!(irreducibles([2, 3]).len(), 0);
+                assert_eq!(irreducibles([3, 2]).len(), 0)
+            }
+
+            #[test]
+            fn three_by_three() {
+                assert_eq!(irreducibles([3, 3]).len(), 2);
+                assert_eq!(irreducibles([3, 3]).len(), 2)
+            }
         }
     }
 }

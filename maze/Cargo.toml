@@ -4,8 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+async-recursion = "1.0.4"
 coverages = { path = "../coverages" }
 lazy_static = "1.4.0"
 log = "0.4.19"
-rand-wyrand = "0.1.0"
+rand = { version = "0.8.5", features = ["log", "serde", "alloc"] }
+rand-wyrand = { version = "0.1.0" }
+serde = { version = "1.0.179", features = ["derive"] }
 tokio = { version = "1.29.1", features = ["sync"] }

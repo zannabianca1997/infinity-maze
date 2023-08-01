@@ -89,6 +89,19 @@ impl Rect {
             None
         }
     }
+
+    /// Logaritm of the aspect ration
+    #[inline(always)]
+    #[must_use]
+    pub fn aspect_ratio(&self) -> f64 {
+        ((self.maxx - self.minx) as f64).ln() - ((self.maxy - self.miny) as f64).ln()
+    }
+
+    #[inline(always)]
+    #[must_use]
+    pub fn top_left(&self) -> [i64; 2] {
+        [self.minx, self.maxx]
+    }
 }
 
 pub struct Linearized<'a>(&'a Rect);

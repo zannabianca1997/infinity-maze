@@ -5,18 +5,10 @@
 #![feature(const_convert)]
 #![feature(is_some_and)]
 
-use std::{
-    collections::{HashSet},
-    iter::repeat_with,
-};
+use std::{collections::HashSet, iter::repeat_with};
 
 use async_recursion::async_recursion;
-use rand::{
-    distributions::{Uniform},
-    prelude::Distribution,
-    seq::{SliceRandom},
-    Rng, SeedableRng,
-};
+use rand::{distributions::Uniform, prelude::Distribution, seq::SliceRandom, Rng, SeedableRng};
 use rand_wyrand::WyRand;
 use serde::Deserialize;
 use tokio::sync::OnceCell;

@@ -28,18 +28,11 @@ async fn main() -> anyhow::Result<()> {
 
     println!("File: {}", infile.to_string_lossy());
     println!("Max size: {}", covers.max_size);
-    println!(
-        "Total covers: {}",
-        covers.covers.values().map(|v| v.len()).sum::<usize>()
-    );
+    println!("Total covers: {}", covers.covers.len());
     println!(
         "Unpacked memory: {}",
         format_size(covers.deep_size_of(), BINARY)
     );
-    println!("By shape:");
-    for ([w, h], covers) in covers.covers.iter() {
-        println!("{w}x{h}: {}", covers.len())
-    }
 
     Ok(())
 }

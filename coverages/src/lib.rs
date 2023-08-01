@@ -1,5 +1,6 @@
 #![feature(iter_collect_into)]
 
+use std::collections::BTreeSet;
 use std::{collections::BTreeMap, fmt::Display};
 use std::{io, panic};
 
@@ -47,6 +48,23 @@ impl Rect {
     const fn area(&self) -> Area {
         (self.maxx - self.minx) as Area * (self.maxy - self.miny) as Area
     }
+
+    #[inline(always)]
+    #[must_use]
+    fn transpose(self) -> Rect {
+        let Rect {
+            minx,
+            miny,
+            maxx,
+            maxy,
+        } = self;
+        Rect {
+            minx: miny,
+            miny: minx,
+            maxx: maxy,
+            maxy: maxx,
+        }
+    }
 }
 
 /// An orthogonal line
@@ -70,6 +88,23 @@ impl Side {
             ..
         }) = self;
         *max - *min
+    }
+
+    #[inline(always)]
+    #[must_use]
+    pub const fn transpose(self) -> Side {
+        match self {
+            Side::Vertical { x, miny, maxy } => Side::Orizontal {
+                y: x,
+                minx: miny,
+                maxx: maxy,
+            },
+            Side::Orizontal { y, minx, maxx } => Side::Vertical {
+                x: y,
+                miny: minx,
+                maxy: maxx,
+            },
+        }
     }
 }
 
@@ -123,6 +158,29 @@ pub struct Cover {
     pub rects: Box<[Rect]>,
     pub shared_sides: Box<[Box<[Option<Side>]>]>,
 }
+impl Cover {
+    fn transposed(self) -> Cover {
+        let Cover {
+            shape: [w, h],
+            rects,
+            shared_sides,
+        } = self;
+        Cover {
+            shape: [h, w],
+            rects: rects.into_vec().into_iter().map(Rect::transpose).collect(),
+            shared_sides: shared_sides
+                .into_vec()
+                .into_iter()
+                .map(|r| {
+                    r.into_vec()
+                        .into_iter()
+                        .map(|s| s.map(Side::transpose))
+                        .collect()
+                })
+                .collect(),
+        }
+    }
+}
 impl Display for Cover {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let stride = self.shape[0] as usize * 2 + 1;
@@ -152,7 +210,7 @@ impl Display for Cover {
     }
 }
 
-pub fn irreducibles(shape: [Coord; 2]) -> Box<[Cover]> {
+pub fn irreducibles(shape: [Coord; 2]) -> Vec<Cover> {
     fn irreducibles(
         shape: [Coord; 2],
         rects: Vec<Rect>,
@@ -270,13 +328,12 @@ pub fn irreducibles(shape: [Coord; 2]) -> Box<[Cover]> {
         vec![Some(shape[0]); shape[1] as usize - 1],
         vec![Some(shape[1]); shape[0] as usize - 1],
     )
-    .into_boxed_slice()
 }
 
 #[derive(Debug, Clone, Encode, Decode, DeepSizeOf)]
 pub struct IrreducibleCovers {
     pub max_size: Coord,
-    pub covers: BTreeMap<[Coord; 2], Box<[Cover]>>,
+    pub covers: BTreeSet<Cover>,
 }
 impl IrreducibleCovers {
     #[must_use]
@@ -286,32 +343,44 @@ impl IrreducibleCovers {
             for h in 1..=w {
                 tasks.push(tokio::spawn(async move {
                     log::info!("Calculating covers {w}x{h}");
-                    let res = ([w, h], irreducibles([w, h]));
+                    let res = irreducibles([w, h]);
                     log::info!("Completed covers {w}x{h}");
                     res
                 }));
             }
         }
-        let mut covers = BTreeMap::new();
+        let mut covers = Vec::new();
         for task in tasks {
             match task.await {
-                Ok((shape, cs)) => covers.insert(shape, cs),
+                Ok(mut res) => covers.append(&mut res),
                 Err(err) => panic::resume_unwind(err.into_panic()),
             };
         }
-        Self { max_size, covers }
+        Self {
+            max_size,
+            covers: covers
+                .into_iter()
+                .flat_map(|c| [c.clone(), c.transposed()])
+                .collect(),
+        }
     }
 
     #[must_use]
     pub fn compute(max_size: Coord) -> Self {
-        let mut covers = BTreeMap::new();
+        let mut covers = Vec::new();
         for w in 1..=max_size {
             for h in 1..=w {
-                covers.insert([w, h], irreducibles([w, h]));
+                covers.append(&mut irreducibles([w, h]));
                 log::info!("Completed covers {w}x{h}");
             }
         }
-        Self { max_size, covers }
+        Self {
+            max_size,
+            covers: covers
+                .into_iter()
+                .flat_map(|c| [c.clone(), c.transposed()])
+                .collect(),
+        }
     }
 
     pub fn write(&self, writer: impl io::Write) -> io::Result<()> {

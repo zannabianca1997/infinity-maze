@@ -11,7 +11,6 @@ use async_recursion::async_recursion;
 use futures::future::join_all;
 use rand::{distributions::Uniform, prelude::Distribution, seq::SliceRandom, Rng, SeedableRng};
 use rand_wyrand::WyRand;
-use serde::Deserialize;
 use tokio::sync::{Mutex, OnceCell};
 
 mod rects;
@@ -21,18 +20,8 @@ use crate::covers::COVERS;
 
 mod covers;
 
-/// Config for a maze
-#[derive(Debug, Clone, Copy, Deserialize)]
-pub struct Config {
-    /// Seed of the maze
-    pub seed: u64,
-    /// Mean room size
-    pub room_size: f64,
-    /// Variance of the room aspect ratio
-    /// -> 0   means that oblunged rooms are accepted
-    /// -> inf means that rooms are choosen to be the most squarish
-    pub room_squaring_factor: f64,
-}
+pub mod config;
+pub use config::Config;
 
 /// A maze generator
 #[derive(Debug, Clone)]

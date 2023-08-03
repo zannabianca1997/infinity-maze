@@ -459,6 +459,7 @@ name = "maze"
 version = "0.1.0"
 dependencies = [
  "async-recursion",
+ "clap",
  "coverages",
  "futures",
  "lazy_static",

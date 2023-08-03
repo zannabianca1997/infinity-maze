@@ -8,6 +8,14 @@ pub struct Rect {
 }
 
 impl Rect {
+    /// Largest possible rectangle
+    pub const MAX: Rect = Rect {
+        minx: i64::MIN,
+        miny: i64::MIN,
+        maxx: i64::MAX,
+        maxy: i64::MAX,
+    };
+
     /// Check if a points is inside this rect
     /// ```
     /// use maze::Rect;

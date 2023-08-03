@@ -5,13 +5,14 @@
 #![feature(const_convert)]
 #![feature(is_some_and)]
 
-use std::{collections::HashSet, iter::repeat_with};
+use std::{collections::HashSet, iter::repeat_with, panic::resume_unwind, sync::Arc};
 
 use async_recursion::async_recursion;
+use futures::future::join_all;
 use rand::{distributions::Uniform, prelude::Distribution, seq::SliceRandom, Rng, SeedableRng};
 use rand_wyrand::WyRand;
 use serde::Deserialize;
-use tokio::sync::OnceCell;
+use tokio::sync::{Mutex, OnceCell};
 
 mod rects;
 pub use rects::{Rect, Side};
@@ -23,6 +24,8 @@ mod covers;
 /// Config for a maze
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct Config {
+    /// Seed of the maze
+    pub seed: u64,
     /// Mean room size
     pub room_size: f64,
     /// Variance of the room aspect ratio
@@ -31,39 +34,64 @@ pub struct Config {
     pub room_squaring_factor: f64,
 }
 
+/// A maze generator
 #[derive(Debug, Clone)]
-
-struct Doors {
-    top: Box<[[i64; 2]]>,
-    left: Box<[[i64; 2]]>,
+pub struct Maze {
+    /// General config for the maze
+    config: Arc<Config>,
+    /// root submaze
+    root: OnceCell<SubMaze>,
+}
+impl Maze {
+    /// Create a new maze with a given config
+    pub fn new(config: Config) -> Self {
+        Self {
+            config: Arc::new(config),
+            root: OnceCell::new(),
+        }
+    }
+    async fn draw(&self, rect: Rect, buf: &mut [Tile]) {
+        debug_assert_eq!(rect.linearized().map(|l| l.len()), Some(buf.len()));
+        self.root
+            .get_or_init(|| async {
+                SubMaze::new(
+                    Rect::MAX,
+                    WyRand::seed_from_u64(self.config.seed),
+                    self.config.clone(),
+                )
+            })
+            .await
+            .draw(rect, &Mutex::new(buf))
+            .await
+    }
 }
 
 /// A maze that covers a given domain
 #[derive(Debug, Clone)]
-struct SubMaze<'c> {
+struct SubMaze {
     /// General config for the maze
-    config: &'c Config,
+    config: Arc<Config>,
     /// Domain of this maze
     domain: Rect,
-    /// Random number generator for this node
-    rng: WyRand,
+    /// Random number generator seed for this node
+    seed: u64,
     /// Content of the submaze
-    content: SubMazeContent<'c>,
+    content: SubMazeContent,
 }
 
 #[derive(Debug, Clone)]
-enum SubMazeContent<'c> {
+enum SubMazeContent {
     Submazes {
         /// Rectangles of the submazes
         rects: Box<[Rect]>,
         /// Submazes
-        cells: Box<[OnceCell<SubMaze<'c>>]>,
+        cells: Box<[OnceCell<SubMaze>]>,
     },
     Room,
 }
 
-impl<'c> SubMaze<'c> {
-    fn new(domain: Rect, mut rng: WyRand, config: &'c Config) -> Self {
+impl SubMaze {
+    fn new(domain: Rect, mut rng: WyRand, config: Arc<Config>) -> Self {
         // First: we need to split further?
         if domain.shape().into_iter().any(|s| s == 1)
             || domain.linearized().is_some_and(|l| {
@@ -75,7 +103,7 @@ impl<'c> SubMaze<'c> {
             return Self {
                 domain,
                 config,
-                rng,
+                seed: rng.gen(),
                 content: SubMazeContent::Room,
             };
         }
@@ -138,7 +166,7 @@ impl<'c> SubMaze<'c> {
         Self {
             config,
             domain,
-            rng,
+            seed: rng.gen(),
             content: SubMazeContent::Submazes {
                 cells: repeat_with(OnceCell::new).take(rects.len()).collect(),
                 rects,
@@ -147,31 +175,44 @@ impl<'c> SubMaze<'c> {
     }
 
     #[async_recursion]
-    async fn draw(&self, rect: Rect, buf: &mut [Tile]) {
+    async fn draw(&self, rect: Rect, buf: &Mutex<&mut [Tile]>) {
         match &self.content {
             SubMazeContent::Submazes { rects, cells } => {
                 // recurse
-                for (i, r) in rects.iter().enumerate() {
+                join_all(rects.iter().enumerate().filter_map(|(i, r)| {
                     if r.collide(&rect) {
                         // this room need to be drawn
-                        cells[i]
-                            .get_or_init(|| async {
-                                let rng = WyRand::seed_from_u64(
-                                    self.rng.clone().gen::<u64>().wrapping_add(i as u64),
-                                );
-                                Self::new(*r, rng, self.config)
-                            })
-                            .await
-                            .draw(rect, buf)
-                            .await;
+                        Some(async move {
+                            match cells[i]
+                                .get_or_try_init(move || {
+                                    let r = *r;
+                                    let rng =
+                                        WyRand::seed_from_u64(self.seed.wrapping_add(i as u64));
+                                    let config = self.config.clone();
+                                    // Only the new is spawned in a thread, to avoid messing with the &buf lifetime
+                                    tokio::spawn(async move { Self::new(r, rng, config) })
+                                })
+                                .await
+                            {
+                                Ok(s) => s.draw(rect, buf).await,
+                                Err(err) => match err.try_into_panic() {
+                                    Ok(payload) => resume_unwind(payload),
+                                    Err(err) => panic!("Submaze generation thread failed: {err}"),
+                                },
+                            }
+                        })
+                    } else {
+                        None
                     }
-                }
+                }))
+                .await;
             }
             SubMazeContent::Room => {
                 let l = rect
                     .linearized()
                     .expect("Cannot draw on a non-linearizable buffer");
-                debug_assert!(l.len() == buf.len());
+                // locking the buffer for the whole drawing step
+                let mut buf = buf.lock().await;
                 // top-left corner
                 if rect.contains(&self.domain.top_left()) {
                     buf[l.global_to_linear(&self.domain.top_left())] = Tile::Both;

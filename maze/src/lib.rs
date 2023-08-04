@@ -7,7 +7,7 @@
 
 use std::{
     collections::{BTreeSet, HashSet},
-    iter::repeat_with,
+    iter::{repeat_with, zip},
     panic::resume_unwind,
     sync::Arc,
 };
@@ -56,6 +56,7 @@ impl Maze {
                     Rect::MAX,
                     WyRand::seed_from_u64(self.config.seed),
                     self.config.clone(),
+                    Default::default(),
                 )
             })
             .await
@@ -82,19 +83,21 @@ enum SubMazeContent {
     Submazes {
         /// Rectangles of the submazes
         rects: Box<[Rect]>,
+        /// Doors of the submaze
+        doors: Box<[Doors]>,
         /// Submazes
         cells: Box<[OnceCell<SubMaze>]>,
-        /// Doors
-        doors: Box<[Door]>,
     },
     Room {
         /// Color of the room floor
         color: [u8; 3],
+        /// Entrance to the room
+        doors: Doors,
     },
 }
 
 impl SubMaze {
-    fn new(domain: Rect, mut rng: WyRand, config: Arc<Config>) -> Self {
+    fn new(domain: Rect, mut rng: WyRand, config: Arc<Config>, upper_doors: Doors) -> Self {
         debug_assert!(domain.maxx > domain.minx && domain.maxy > domain.miny);
         // First: we need to split further?
         if domain.shape().into_iter().any(|s| s == 1)
@@ -114,7 +117,10 @@ impl SubMaze {
                 domain,
                 config,
                 seed: rng.gen(),
-                content: SubMazeContent::Room { color },
+                content: SubMazeContent::Room {
+                    color,
+                    doors: upper_doors,
+                },
             };
         }
         // choosing a suitable cover
@@ -198,29 +204,93 @@ impl SubMaze {
                 }
             }
         }
+        // Creating doors
+        let mut doors: Box<[Doors]> = vec![Default::default(); rects.len()].into_boxed_slice();
         // Choosing a graph submaze
         let graph = maze_graph(&mut rng, &cover.shared_sides);
-        let mut doors = vec![];
         for (i, c) in graph.iter().enumerate() {
-            for side in &c[..i] {
-                // deduplicate to avoid double doors
+            // deduplicate to avoid double doors
+            for (j, side) in c[..i].iter().enumerate() {
                 if let Some(side) = *side {
-                    let side = match side {
-                        coverages::Side::Vertical { x, miny, maxy } => Side::Vertical {
-                            x: map_x(*x),
-                            miny: map_y(*miny),
-                            maxy: map_y(*maxy),
-                        },
-                        coverages::Side::Orizontal { y, minx, maxx } => Side::Orizontal {
-                            y: map_y(*y),
-                            minx: map_x(*minx),
-                            maxx: map_x(*maxx),
-                        },
+                    match side {
+                        coverages::Side::Vertical { x, miny, maxy } => {
+                            let x = map_x(*x);
+                            let y = rng.gen_range(map_y(*miny)..map_y(*maxy));
+                            let (right_cell, left_cell) = if rects[i].contains(&[x, y]) {
+                                (i, j)
+                            } else {
+                                debug_assert!(rects[j].contains(&[x, y]));
+                                (j, i)
+                            };
+                            doors[right_cell].left.insert(y);
+                            doors[left_cell].right.insert(y);
+                        }
+                        coverages::Side::Orizontal { y, minx, maxx } => {
+                            let y = map_y(*y);
+                            let x = rng.gen_range(map_x(*minx)..map_x(*maxx));
+                            let (bottom_cell, top_cell) = if rects[i].contains(&[x, y]) {
+                                (i, j)
+                            } else {
+                                debug_assert!(rects[j].contains(&[x, y]));
+                                (j, i)
+                            };
+                            doors[bottom_cell].top.insert(x);
+                            doors[top_cell].bottom.insert(x);
+                        }
                     };
-                    doors.push(Door::open(&mut rng, side))
                 }
             }
         }
+        // Adding the doors from the upper level
+        'd: for door_x in upper_doors.top {
+            for (r, d) in zip(rects.iter(), doors.iter_mut()) {
+                if r.contains(&[door_x, domain.miny]) {
+                    d.top.insert(door_x);
+                    continue 'd;
+                }
+            }
+            panic!(
+                "{domain:?}: No rect found for door [{door_x},{}]",
+                domain.miny
+            )
+        }
+        'd: for door_x in upper_doors.bottom {
+            for (r, d) in zip(rects.iter(), doors.iter_mut()) {
+                if r.contains(&[door_x, domain.maxy - 1]) {
+                    d.bottom.insert(door_x);
+                    continue 'd;
+                }
+            }
+            panic!(
+                "{domain:?}: No rect found for door [{door_x},{}]",
+                domain.maxy - 1
+            )
+        }
+        'd: for door_y in upper_doors.left {
+            for (r, d) in zip(rects.iter(), doors.iter_mut()) {
+                if r.contains(&[domain.minx, door_y]) {
+                    d.left.insert(door_y);
+                    continue 'd;
+                }
+            }
+            panic!(
+                "{domain:?}: No rect found for door [{},{door_y}]",
+                domain.minx
+            )
+        }
+        'd: for door_y in upper_doors.right {
+            for (r, d) in zip(rects.iter(), doors.iter_mut()) {
+                if r.contains(&[domain.maxx - 1, door_y]) {
+                    d.right.insert(door_y);
+                    continue 'd;
+                }
+            }
+            panic!(
+                "{domain:?}: No rect found for door [{},{door_y}]",
+                domain.maxx - 1
+            )
+        }
+
         log::debug!("{domain:?}: Initializing {} submazes", rects.len());
         Self {
             config,
@@ -228,7 +298,7 @@ impl SubMaze {
             seed: rng.gen(),
             content: SubMazeContent::Submazes {
                 cells: repeat_with(OnceCell::new).take(rects.len()).collect(),
-                doors: doors.into_boxed_slice(),
+                doors,
                 rects,
             },
         }
@@ -251,11 +321,12 @@ impl SubMaze {
                             match cells[i]
                                 .get_or_try_init(move || {
                                     let r = *r;
+                                    let doors = doors[i].clone();
                                     let rng =
                                         WyRand::seed_from_u64(self.seed.wrapping_add(i as u64));
                                     let config = self.config.clone();
                                     // Only the new is spawned in a thread, to avoid messing with the &buf lifetime
-                                    tokio::spawn(async move { Self::new(r, rng, config) })
+                                    tokio::spawn(async move { Self::new(r, rng, config, doors) })
                                 })
                                 .await
                             {
@@ -271,13 +342,8 @@ impl SubMaze {
                     }
                 }))
                 .await;
-                // drawing doors
-                let mut buf = buf.lock().await;
-                for d in doors.iter() {
-                    d.draw(rect, *buf)
-                }
             }
-            SubMazeContent::Room { color } => {
+            SubMazeContent::Room { color, doors } => {
                 log::debug!("{:?}: Drawing room", self.domain);
                 let l = rect
                     .linearized()
@@ -430,53 +496,11 @@ pub struct Tile {
     pub walls: Walls,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Door {
-    Up { x: i64, y: i64 },
-    Left { x: i64, y: i64 },
-}
-impl Door {
-    #[inline(always)]
-    #[must_use]
-    fn open(rng: &mut WyRand, side: Side) -> Door {
-        match side {
-            Side::Vertical { x, miny, maxy } => Door::Left {
-                x,
-                y: rng.gen_range(miny..maxy),
-            },
-            Side::Orizontal { y, minx, maxx } => Door::Up {
-                x: rng.gen_range(minx..maxx),
-                y,
-            },
-        }
-    }
-
-    #[inline(always)]
-    #[must_use]
-    const fn pos(&self) -> [i64; 2] {
-        let (Door::Up { x, y } | Door::Left { x, y }) = self;
-        [*x, *y]
-    }
-
-    fn draw(&self, rect: Rect, buf: &mut [Tile]) {
-        let l = rect.linearized().unwrap();
-        match *self {
-            Door::Up { x, y } => {
-                if rect.contains(&[x, y]) {
-                    buf[l.global_to_linear(&[x, y])].walls -= Walls::TopWall;
-                }
-                if rect.contains(&[x, y - 1]) {
-                    buf[l.global_to_linear(&[x, y - 1])].walls -= Walls::BottomWall;
-                }
-            }
-            Door::Left { x, y } => {
-                if rect.contains(&[x, y]) {
-                    buf[l.global_to_linear(&[x, y])].walls -= Walls::LeftWall;
-                }
-                if rect.contains(&[x - 1, y]) {
-                    buf[l.global_to_linear(&[x - 1, y])].walls -= Walls::RightWall;
-                }
-            }
-        }
-    }
+/// Doors to a section of the maze
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+struct Doors {
+    top: BTreeSet<i64>,
+    bottom: BTreeSet<i64>,
+    left: BTreeSet<i64>,
+    right: BTreeSet<i64>,
 }

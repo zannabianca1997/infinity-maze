@@ -13,6 +13,7 @@ use std::{
 };
 
 use async_recursion::async_recursion;
+use bitflags::bitflags;
 use futures::future::join_all;
 use rand::{
     distributions::{Distribution, Uniform, WeightedIndex},
@@ -283,48 +284,42 @@ impl SubMaze {
                     .expect("Cannot draw on a non-linearizable buffer");
                 // locking the buffer for the whole drawing step
                 let mut buf = buf.lock().await;
-                // top-left corner
-                if rect.contains(&self.domain.top_left()) {
-                    buf[l.global_to_linear(&self.domain.top_left())] = Tile {
-                        color: *color,
-                        connections: Walls::Both,
-                    };
+                // filling in the color
+                for [x, y] in Rect::intersection(&self.domain, &rect).unwrap() {
+                    buf[l.global_to_linear(&[x, y])].color = *color;
                 }
                 // top side
-                let y = self.domain.miny;
-                if rect.miny <= y && y < rect.maxy {
-                    for x in i64::max(self.domain.minx + 1, rect.minx)
-                        ..i64::min(self.domain.maxx, rect.maxx)
-                    {
-                        buf[l.global_to_linear(&[x, y])] = Tile {
-                            color: *color,
-                            connections: Walls::Up,
-                        };
+                if let Some(side) = self.domain.top().intersection(&rect) {
+                    for [x, y] in side {
+                        buf[l.global_to_linear(&[x, y])].walls |= Walls::Top;
+                    }
+                }
+                // bottom side
+                if let Some(side) = self.domain.bottom().intersection(&rect) {
+                    for [x, y] in side {
+                        buf[l.global_to_linear(&[x, y])].walls |= Walls::Bottom;
                     }
                 }
                 // left side
-                let x = self.domain.minx;
-                if rect.minx <= x && x < rect.maxx {
-                    for y in i64::max(self.domain.miny + 1, rect.miny)
-                        ..i64::min(self.domain.maxy, rect.maxy)
-                    {
-                        buf[l.global_to_linear(&[x, y])] = Tile {
-                            color: *color,
-                            connections: Walls::Left,
-                        };
+                if let Some(side) = self.domain.left().intersection(&rect) {
+                    for [x, y] in side {
+                        buf[l.global_to_linear(&[x, y])].walls |= Walls::Left;
                     }
                 }
-                // Floor
-                for x in
-                    i64::max(self.domain.minx + 1, rect.minx)..i64::min(self.domain.maxx, rect.maxx)
+                // right side
+                if let Some(side) = self.domain.right().intersection(&rect) {
+                    for [x, y] in side {
+                        buf[l.global_to_linear(&[x, y])].walls |= Walls::Right;
+                    }
+                }
+                // floor
+                if let Some(inner) = self
+                    .domain
+                    .inner()
+                    .and_then(|inner| inner.intersection(&rect))
                 {
-                    for y in i64::max(self.domain.miny + 1, rect.miny)
-                        ..i64::min(self.domain.maxy, rect.maxy)
-                    {
-                        buf[l.global_to_linear(&[x, y])] = Tile {
-                            color: *color,
-                            connections: Walls::None,
-                        };
+                    for [x, y] in inner {
+                        buf[l.global_to_linear(&[x, y])].walls = Walls::empty();
                     }
                 }
             }
@@ -407,20 +402,32 @@ where
     maze
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[repr(u8)]
-pub enum Walls {
-    #[default]
-    None = 0,
-    Up = 1,
-    Left = 2,
-    Both = 3,
+bitflags! {
+    /// Walls around a tile
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash,Default)]
+    pub struct Walls: u8 {
+        // Corners
+        const TopLeftCorner     = 0b10000000;
+        const TopRightCorner    = 0b01000000;
+        const BottomLeftCorner  = 0b00100000;
+        const BottomRightCorner = 0b00010000;
+        // Walls
+        const TopWall    = 0b00001000;
+        const LeftWall   = 0b00000100;
+        const BottomWall = 0b00000010;
+        const RightWall  = 0b00000001;
+        // Combined walls + corners
+        const Top    = Self::TopLeftCorner.bits() | Self::TopWall.bits() | Self::TopRightCorner.bits();
+        const Bottom = Self::BottomLeftCorner.bits() | Self::BottomWall.bits() | Self::BottomRightCorner.bits();
+        const Left   = Self::TopLeftCorner.bits() | Self::LeftWall.bits() | Self::BottomLeftCorner.bits();
+        const Right  = Self::BottomRightCorner.bits() | Self::RightWall.bits() | Self::TopRightCorner.bits();
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Tile {
     pub color: [u8; 3],
-    pub connections: Walls,
+    pub walls: Walls,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -452,17 +459,23 @@ impl Door {
     }
 
     fn draw(&self, rect: Rect, buf: &mut [Tile]) {
-        let pos = self.pos();
-        if rect.contains(&pos) {
-            let t = &mut buf[rect.linearized().unwrap().global_to_linear(&pos)].connections;
-            *t = match (&t, self) {
-                (Walls::None, _) => unreachable!("Doors should always fall on a border"),
-                (Walls::Up, Door::Left { .. }) | (Walls::Left, Door::Up { .. }) => {
-                    unreachable!("Doors should always fall on an aligned border")
+        let l = rect.linearized().unwrap();
+        match *self {
+            Door::Up { x, y } => {
+                if rect.contains(&[x, y]) {
+                    buf[l.global_to_linear(&[x, y])].walls -= Walls::TopWall;
                 }
-                (Walls::Up, Door::Up { .. }) | (Walls::Left, Door::Left { .. }) => Walls::None,
-                (Walls::Both, Door::Up { .. }) => Walls::Left,
-                (Walls::Both, Door::Left { .. }) => Walls::Up,
+                if rect.contains(&[x, y - 1]) {
+                    buf[l.global_to_linear(&[x, y - 1])].walls -= Walls::BottomWall;
+                }
+            }
+            Door::Left { x, y } => {
+                if rect.contains(&[x, y]) {
+                    buf[l.global_to_linear(&[x, y])].walls -= Walls::LeftWall;
+                }
+                if rect.contains(&[x - 1, y]) {
+                    buf[l.global_to_linear(&[x - 1, y])].walls -= Walls::RightWall;
+                }
             }
         }
     }

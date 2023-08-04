@@ -685,6 +685,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-recursion",
+ "bitflags 2.3.3",
  "clap",
  "coverages",
  "futures",

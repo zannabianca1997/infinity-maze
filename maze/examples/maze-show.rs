@@ -79,7 +79,7 @@ fn parse_args() -> anyhow::Result<(Config, Rect, PathBuf)> {
 }
 
 const TILE_SIZE: u32 = 10;
-const WALL_SIZE: u32 = 2;
+const WALL_SIZE: u32 = 1;
 const WALL_COLOR: [u8; 3] = [0, 0, 0];
 
 #[tokio::main]
@@ -106,23 +106,99 @@ async fn main() -> anyhow::Result<()> {
     for pos in 0..lin.len() {
         let [top, left] = lin.linear_to_internal(pos).map(|x| x as u32 * TILE_SIZE);
         let tile = buf[pos];
-        for x in left..left + TILE_SIZE {
-            for y in top..top + TILE_SIZE {
-                image[(x, y)].0 = tile.color;
+        // top - left
+        let color = if tile.walls.contains(Walls::TopLeftCorner) {
+            WALL_COLOR
+        } else {
+            tile.color
+        };
+        for x in left..left + WALL_SIZE {
+            for y in top..top + WALL_SIZE {
+                image[(x, y)].0 = color;
             }
         }
-        if matches!(tile.connections, Walls::Both | Walls::Up) {
-            for x in left..left + TILE_SIZE {
-                for y in top..top + WALL_SIZE {
-                    image[(x, y)].0 = WALL_COLOR;
-                }
+        // top
+        let color = if tile.walls.contains(Walls::TopWall) {
+            WALL_COLOR
+        } else {
+            tile.color
+        };
+        for x in left + WALL_SIZE..left + TILE_SIZE - WALL_SIZE {
+            for y in top..top + WALL_SIZE {
+                image[(x, y)].0 = color;
             }
         }
-        if matches!(tile.connections, Walls::Both | Walls::Left) {
-            for x in left..left + WALL_SIZE {
-                for y in top..top + TILE_SIZE {
-                    image[(x, y)].0 = WALL_COLOR;
-                }
+        // top - right
+        let color = if tile.walls.contains(Walls::TopRightCorner) {
+            WALL_COLOR
+        } else {
+            tile.color
+        };
+        for x in left + TILE_SIZE - WALL_SIZE..left + TILE_SIZE {
+            for y in top..top + WALL_SIZE {
+                image[(x, y)].0 = color;
+            }
+        }
+        // left
+        let color = if tile.walls.contains(Walls::LeftWall) {
+            WALL_COLOR
+        } else {
+            tile.color
+        };
+        for x in left..left + WALL_SIZE {
+            for y in top + WALL_SIZE..top + TILE_SIZE - WALL_SIZE {
+                image[(x, y)].0 = color;
+            }
+        }
+        // center
+        let color = tile.color;
+        for x in left + WALL_SIZE..left + TILE_SIZE - WALL_SIZE {
+            for y in top + WALL_SIZE..top + TILE_SIZE - WALL_SIZE {
+                image[(x, y)].0 = color;
+            }
+        }
+        // right
+        let color = if tile.walls.contains(Walls::RightWall) {
+            WALL_COLOR
+        } else {
+            tile.color
+        };
+        for x in left + TILE_SIZE - WALL_SIZE..left + TILE_SIZE {
+            for y in top + WALL_SIZE..top + TILE_SIZE - WALL_SIZE {
+                image[(x, y)].0 = color;
+            }
+        }
+        // bottom - left
+        let color = if tile.walls.contains(Walls::BottomLeftCorner) {
+            WALL_COLOR
+        } else {
+            tile.color
+        };
+        for x in left..left + WALL_SIZE {
+            for y in top + TILE_SIZE - WALL_SIZE..top + TILE_SIZE {
+                image[(x, y)].0 = color;
+            }
+        }
+        // bottom
+        let color = if tile.walls.contains(Walls::BottomWall) {
+            WALL_COLOR
+        } else {
+            tile.color
+        };
+        for x in left + WALL_SIZE..left + TILE_SIZE - WALL_SIZE {
+            for y in top + TILE_SIZE - WALL_SIZE..top + TILE_SIZE {
+                image[(x, y)].0 = color;
+            }
+        }
+        // bottom - right
+        let color = if tile.walls.contains(Walls::BottomRightCorner) {
+            WALL_COLOR
+        } else {
+            tile.color
+        };
+        for x in left + TILE_SIZE - WALL_SIZE..left + TILE_SIZE {
+            for y in top + TILE_SIZE - WALL_SIZE..top + TILE_SIZE {
+                image[(x, y)].0 = color;
             }
         }
     }

@@ -126,7 +126,7 @@ impl SubMaze {
                 false
             }
         {
-            log::debug!("{domain:?}: Setting as room.");
+            log::debug!("{domain:?}: Generating room.");
             let color = [255; 3];
             // do not split further
             return Self {
@@ -212,7 +212,6 @@ impl SubMaze {
             .collect();
         #[cfg(debug_assertions)]
         {
-            log::debug!("{domain:?}: Checking for subrects collisions");
             for (i, r1) in rects.iter().enumerate() {
                 assert!(domain.covers(r1));
                 for r2 in rects[..i].iter() {
@@ -307,7 +306,7 @@ impl SubMaze {
             )
         }
 
-        log::debug!("{domain:?}: Initializing {} submazes", rects.len());
+        log::trace!("{domain:?}: Initializing {} submazes", rects.len());
         Self {
             config,
             domain,
@@ -328,7 +327,7 @@ impl SubMaze {
                 cells,
                 doors,
             } => {
-                log::debug!("{:?}: Recursing into submazes", self.domain);
+                log::trace!("{:?}: Recursing into submazes", self.domain);
                 // recurse
                 join_all(rects.iter().enumerate().filter_map(|(i, r)| {
                     if r.collide(&rect) {
@@ -360,16 +359,19 @@ impl SubMaze {
                 .await;
             }
             SubMazeContent::Room { color, doors } => {
-                log::debug!("{:?}: Drawing room", self.domain);
                 let l = rect
                     .linearized()
                     .expect("Cannot draw on a non-linearizable buffer");
                 // locking the buffer for the whole drawing step
                 let mut buf = buf.lock().await;
-                // filling in the color
+
+                log::trace!("{:?}: Drawing room.", self.domain);
+                // filling in the floor color
                 for [x, y] in Rect::intersection(&self.domain, &rect).unwrap() {
                     buf[l.global_to_linear(&[x, y])].color = *color;
                 }
+
+                log::trace!("{:?}: Adding walls.", self.domain);
                 // top side
                 if let Some(side) = self.domain.top().intersection(&rect) {
                     for [x, y] in side {
@@ -395,6 +397,7 @@ impl SubMaze {
                     }
                 }
                 // floor
+                // We unset eventual walls, to permit complete redraws
                 if let Some(inner) = self
                     .domain
                     .inner()
@@ -402,6 +405,32 @@ impl SubMaze {
                 {
                     for [x, y] in inner {
                         buf[l.global_to_linear(&[x, y])].walls = Walls::empty();
+                    }
+                }
+
+                log::trace!("{:?}: Adding walls.", self.domain);
+                for x in &doors.top {
+                    let p = [*x, self.domain.miny];
+                    if rect.contains(&p) {
+                        buf[l.global_to_linear(&p)].walls -= Walls::TopWall;
+                    }
+                }
+                for x in &doors.bottom {
+                    let p = [*x, self.domain.maxy - 1];
+                    if rect.contains(&p) {
+                        buf[l.global_to_linear(&p)].walls -= Walls::BottomWall;
+                    }
+                }
+                for y in &doors.left {
+                    let p = [self.domain.minx, *y];
+                    if rect.contains(&p) {
+                        buf[l.global_to_linear(&p)].walls -= Walls::LeftWall;
+                    }
+                }
+                for y in &doors.right {
+                    let p = [self.domain.maxx - 1, *y];
+                    if rect.contains(&p) {
+                        buf[l.global_to_linear(&p)].walls -= Walls::RightWall;
                     }
                 }
             }

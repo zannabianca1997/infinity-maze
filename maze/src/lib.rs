@@ -13,7 +13,6 @@ use std::{
 };
 
 use async_recursion::async_recursion;
-use bitflags::bitflags;
 use futures::future::join_all;
 use rand::{
     distributions::{Distribution, Uniform, WeightedIndex},
@@ -34,13 +33,13 @@ pub use config::Config;
 
 /// A maze generator
 #[derive(Debug, Clone)]
-pub struct Maze {
+pub struct Maze<RoomT> {
     /// General config for the maze
     config: Arc<Config>,
     /// root submaze
-    root: OnceCell<SubMaze>,
+    root: OnceCell<SubMaze<RoomT>>,
 }
-impl Maze {
+impl<RoomT> Maze<RoomT> {
     /// Create a new maze with a given config
     pub fn new(config: Config) -> Self {
         Self {
@@ -48,7 +47,13 @@ impl Maze {
             root: OnceCell::new(),
         }
     }
-    pub async fn draw(&self, rect: Rect, buf: &mut [Tile]) {
+}
+impl<RoomT> Maze<RoomT>
+where
+    RoomT: Room + Send + Sync + 'static,
+    RoomT::Tile: Send,
+{
+    pub async fn draw(&self, rect: Rect, buf: &mut [RoomT::Tile]) {
         debug_assert_eq!(rect.linearized().map(|l| l.len()), Some(buf.len()));
         self.root
             .get_or_init(|| async {
@@ -67,36 +72,34 @@ impl Maze {
 
 /// A maze that covers a given domain
 #[derive(Debug, Clone)]
-struct SubMaze {
-    /// General config for the maze
-    config: Arc<Config>,
-    /// Domain of this maze
-    domain: Rect,
-    /// Random number generator seed for this node
-    seed: u64,
+struct SubMaze<RoomT> {
     /// Content of the submaze
-    content: SubMazeContent,
+    content: SubMazeContent<RoomT>,
 }
 
 #[derive(Debug, Clone)]
-enum SubMazeContent {
+enum SubMazeContent<RoomT> {
     Submazes {
+        /// Domain of this maze
+        domain: Rect,
+        /// General config for the maze
+        config: Arc<Config>,
         /// Rectangles of the submazes
         rects: Box<[Rect]>,
         /// Doors of the submaze
         doors: Box<[Doors]>,
         /// Submazes
-        cells: Box<[OnceCell<SubMaze>]>,
+        cells: Box<[OnceCell<SubMaze<RoomT>>]>,
+        /// Random number generator seed for this node
+        seed: u64,
     },
-    Room {
-        /// Color of the room floor
-        color: [u8; 3],
-        /// Entrance to the room
-        doors: Doors,
-    },
+    Room(RoomT),
 }
 
-impl SubMaze {
+impl<RoomT> SubMaze<RoomT>
+where
+    RoomT: Room + 'static,
+{
     fn new(domain: Rect, mut rng: WyRand, config: Arc<Config>, upper_doors: Doors) -> Self {
         debug_assert!(domain.maxx > domain.minx && domain.maxy > domain.miny);
         debug_assert!(upper_doors
@@ -127,16 +130,9 @@ impl SubMaze {
             }
         {
             log::debug!("{domain:?}: Generating room.");
-            let color = [255; 3];
             // do not split further
             return Self {
-                domain,
-                config,
-                seed: rng.gen(),
-                content: SubMazeContent::Room {
-                    color,
-                    doors: upper_doors,
-                },
+                content: SubMazeContent::Room(RoomT::new(domain, upper_doors, &config, &mut rng)),
             };
         }
         // choosing a suitable cover
@@ -308,10 +304,10 @@ impl SubMaze {
 
         log::trace!("{domain:?}: Initializing {} submazes", rects.len());
         Self {
-            config,
-            domain,
-            seed: rng.gen(),
             content: SubMazeContent::Submazes {
+                domain,
+                config,
+                seed: rng.gen(),
                 cells: repeat_with(OnceCell::new).take(rects.len()).collect(),
                 doors,
                 rects,
@@ -320,14 +316,21 @@ impl SubMaze {
     }
 
     #[async_recursion]
-    async fn draw(&self, rect: Rect, buf: &Mutex<&mut [Tile]>) {
+    async fn draw(&self, rect: Rect, buf: &Mutex<&mut [RoomT::Tile]>)
+    where
+        RoomT: Send + Sync,
+        RoomT::Tile: Send,
+    {
         match &self.content {
             SubMazeContent::Submazes {
+                domain,
+                config,
+                seed,
                 rects,
                 cells,
                 doors,
             } => {
-                log::trace!("{:?}: Recursing into submazes", self.domain);
+                log::trace!("{:?}: Recursing into submazes", domain);
                 // recurse
                 join_all(rects.iter().enumerate().filter_map(|(i, r)| {
                     if r.collide(&rect) {
@@ -337,9 +340,8 @@ impl SubMaze {
                                 .get_or_try_init(move || {
                                     let r = *r;
                                     let doors = doors[i].clone();
-                                    let rng =
-                                        WyRand::seed_from_u64(self.seed.wrapping_add(i as u64));
-                                    let config = self.config.clone();
+                                    let rng = WyRand::seed_from_u64(seed.wrapping_add(i as u64));
+                                    let config = config.clone();
                                     // Only the new is spawned in a thread, to avoid messing with the &buf lifetime
                                     tokio::spawn(async move { Self::new(r, rng, config, doors) })
                                 })
@@ -358,82 +360,7 @@ impl SubMaze {
                 }))
                 .await;
             }
-            SubMazeContent::Room { color, doors } => {
-                let l = rect
-                    .linearized()
-                    .expect("Cannot draw on a non-linearizable buffer");
-                // locking the buffer for the whole drawing step
-                let mut buf = buf.lock().await;
-
-                log::trace!("{:?}: Drawing room.", self.domain);
-                // filling in the floor color
-                for [x, y] in Rect::intersection(&self.domain, &rect).unwrap() {
-                    buf[l.global_to_linear(&[x, y])].color = *color;
-                }
-
-                log::trace!("{:?}: Adding walls.", self.domain);
-                // top side
-                if let Some(side) = self.domain.top().intersection(&rect) {
-                    for [x, y] in side {
-                        buf[l.global_to_linear(&[x, y])].walls |= Walls::Top;
-                    }
-                }
-                // bottom side
-                if let Some(side) = self.domain.bottom().intersection(&rect) {
-                    for [x, y] in side {
-                        buf[l.global_to_linear(&[x, y])].walls |= Walls::Bottom;
-                    }
-                }
-                // left side
-                if let Some(side) = self.domain.left().intersection(&rect) {
-                    for [x, y] in side {
-                        buf[l.global_to_linear(&[x, y])].walls |= Walls::Left;
-                    }
-                }
-                // right side
-                if let Some(side) = self.domain.right().intersection(&rect) {
-                    for [x, y] in side {
-                        buf[l.global_to_linear(&[x, y])].walls |= Walls::Right;
-                    }
-                }
-                // floor
-                // We unset eventual walls, to permit complete redraws
-                if let Some(inner) = self
-                    .domain
-                    .inner()
-                    .and_then(|inner| inner.intersection(&rect))
-                {
-                    for [x, y] in inner {
-                        buf[l.global_to_linear(&[x, y])].walls = Walls::empty();
-                    }
-                }
-
-                log::trace!("{:?}: Adding walls.", self.domain);
-                for x in &doors.top {
-                    let p = [*x, self.domain.miny];
-                    if rect.contains(&p) {
-                        buf[l.global_to_linear(&p)].walls -= Walls::TopWall;
-                    }
-                }
-                for x in &doors.bottom {
-                    let p = [*x, self.domain.maxy - 1];
-                    if rect.contains(&p) {
-                        buf[l.global_to_linear(&p)].walls -= Walls::BottomWall;
-                    }
-                }
-                for y in &doors.left {
-                    let p = [self.domain.minx, *y];
-                    if rect.contains(&p) {
-                        buf[l.global_to_linear(&p)].walls -= Walls::LeftWall;
-                    }
-                }
-                for y in &doors.right {
-                    let p = [self.domain.maxx - 1, *y];
-                    if rect.contains(&p) {
-                        buf[l.global_to_linear(&p)].walls -= Walls::RightWall;
-                    }
-                }
-            }
+            SubMazeContent::Room(room) => room.draw(rect, &mut *buf.lock().await),
         }
     }
 }
@@ -513,39 +440,45 @@ where
     maze
 }
 
-bitflags! {
-    /// Walls around a tile
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash,Default)]
-    pub struct Walls: u8 {
-        // Corners
-        const TopLeftCorner     = 0b10000000;
-        const TopRightCorner    = 0b01000000;
-        const BottomLeftCorner  = 0b00100000;
-        const BottomRightCorner = 0b00010000;
-        // Walls
-        const TopWall    = 0b00001000;
-        const LeftWall   = 0b00000100;
-        const BottomWall = 0b00000010;
-        const RightWall  = 0b00000001;
-        // Combined walls + corners
-        const Top    = Self::TopLeftCorner.bits() | Self::TopWall.bits() | Self::TopRightCorner.bits();
-        const Bottom = Self::BottomLeftCorner.bits() | Self::BottomWall.bits() | Self::BottomRightCorner.bits();
-        const Left   = Self::TopLeftCorner.bits() | Self::LeftWall.bits() | Self::BottomLeftCorner.bits();
-        const Right  = Self::BottomRightCorner.bits() | Self::RightWall.bits() | Self::TopRightCorner.bits();
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct Tile {
-    pub color: [u8; 3],
-    pub walls: Walls,
-}
-
 /// Doors to a section of the maze
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
-struct Doors {
+pub struct Doors {
     top: BTreeSet<i64>,
     bottom: BTreeSet<i64>,
     left: BTreeSet<i64>,
     right: BTreeSet<i64>,
+}
+
+impl Doors {
+    /// Location of the doors at the top of the room
+    pub fn top(&self) -> &BTreeSet<i64> {
+        &self.top
+    }
+
+    /// Location of the doors at the bottom of the room
+    pub fn bottom(&self) -> &BTreeSet<i64> {
+        &self.bottom
+    }
+
+    /// Location of the doors at the left of the room
+    pub fn left(&self) -> &BTreeSet<i64> {
+        &self.left
+    }
+
+    /// Location of the doors at the right of the room
+    pub fn right(&self) -> &BTreeSet<i64> {
+        &self.right
+    }
+}
+
+/// Type of the maze rooms
+pub trait Room {
+    type Tile;
+
+    fn new<R>(domain: Rect, doors: Doors, config: &Arc<Config>, rng: &mut R) -> Self
+    where
+        Self: Sized,
+        R: Rng + ?Sized;
+
+    fn draw(&self, rect: Rect, buf: &mut [Self::Tile]);
 }

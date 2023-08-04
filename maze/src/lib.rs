@@ -99,6 +99,22 @@ enum SubMazeContent {
 impl SubMaze {
     fn new(domain: Rect, mut rng: WyRand, config: Arc<Config>, upper_doors: Doors) -> Self {
         debug_assert!(domain.maxx > domain.minx && domain.maxy > domain.miny);
+        debug_assert!(upper_doors
+            .top
+            .iter()
+            .all(|x| domain.minx <= *x && *x < domain.maxx));
+        debug_assert!(upper_doors
+            .bottom
+            .iter()
+            .all(|x| domain.minx <= *x && *x < domain.maxx));
+        debug_assert!(upper_doors
+            .left
+            .iter()
+            .all(|y| domain.miny <= *y && *y < domain.maxy));
+        debug_assert!(upper_doors
+            .right
+            .iter()
+            .all(|y| domain.miny <= *y && *y < domain.maxy));
         // First: we need to split further?
         if domain.shape().into_iter().any(|s| s == 1)
             || if config.room_size > 0. {

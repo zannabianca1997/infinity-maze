@@ -187,8 +187,10 @@ impl Cover {
                 .collect(),
         }
     }
+    /// Mean aspect ratio of the subrects, if a square is covered
     pub fn mean_aspect_ratio(&self) -> f64 {
-        self.rects.into_iter().map(Rect::aspect_ratio).sum::<f64>() / self.rects.len() as f64
+        (self.rects.into_iter().map(Rect::aspect_ratio).sum::<f64>() / self.rects.len() as f64)
+            - ((self.shape[0] as f64).ln() - (self.shape[1] as f64).ln())
     }
 }
 impl Display for Cover {

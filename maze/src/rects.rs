@@ -102,13 +102,13 @@ impl Rect {
     #[inline(always)]
     #[must_use]
     pub fn aspect_ratio(&self) -> f64 {
-        ((self.maxx - self.minx) as f64).ln() - ((self.maxy - self.miny) as f64).ln()
+        (self.maxx.abs_diff(self.minx) as f64).ln() - (self.maxy.abs_diff(self.miny) as f64).ln()
     }
 
     #[inline(always)]
     #[must_use]
     pub fn top_left(&self) -> [i64; 2] {
-        [self.minx, self.maxx]
+        [self.minx, self.miny]
     }
 }
 
@@ -187,7 +187,7 @@ impl Linearized<'_> {
     pub const fn linear_to_internal(&self, pos: usize) -> [u64; 2] {
         debug_assert!(pos < self.len());
         let stride = self.0.shape()[0] as u64;
-        [pos as u64 % stride, pos as u64 / stride]
+        [pos as u64 / stride, pos as u64 % stride]
     }
 }
 

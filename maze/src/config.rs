@@ -19,7 +19,7 @@ impl Default for Config {
         Self {
             seed: 0,
             room_size: 100.,
-            room_squaring_factor: 1.,
+            room_squaring_factor: 4.,
         }
     }
 }
@@ -50,7 +50,7 @@ impl PartialConfig {
             room_squaring_factor: other.room_squaring_factor.or(self.room_squaring_factor),
         }
     }
-    pub fn merge_default(self) -> Config {
+    pub fn or_defaults(self) -> Config {
         let default = Config::default();
         Config {
             seed: self.seed.unwrap_or(default.seed),

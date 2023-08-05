@@ -8,7 +8,6 @@
 use std::{
     collections::{BTreeSet, HashSet},
     iter::{repeat_with, zip},
-    panic::resume_unwind,
     sync::Arc,
 };
 

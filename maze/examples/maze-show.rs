@@ -1,6 +1,6 @@
 use std::{fs::read_to_string, path::PathBuf, sync::Arc};
 
-use anyhow::{bail, Context};
+use anyhow::{Context};
 use clap::Parser;
 use serde::Deserialize;
 use simple_logger::SimpleLogger;

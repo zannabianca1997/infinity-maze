@@ -31,7 +31,7 @@ impl Serialize for Walls {
     where
         S: serde::Serializer,
     {
-        todo!()
+        self.bits().serialize(serializer)
     }
 }
 impl<'de> Deserialize<'de> for Walls {
@@ -39,7 +39,7 @@ impl<'de> Deserialize<'de> for Walls {
     where
         D: serde::Deserializer<'de>,
     {
-        todo!()
+        Deserialize::deserialize(deserializer).map(Self::from_bits_truncate)
     }
 }
 

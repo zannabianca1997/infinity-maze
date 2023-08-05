@@ -2,7 +2,7 @@ use lazy_static::lazy_static;
 
 pub use coverages::*;
 
-static COVERS_DATA: &[u8] = include_bytes!("../../covers.bin");
+static COVERS_DATA: &[u8] = include_bytes!(env!("COVERS_FILE"));
 
 lazy_static! {
     pub static ref COVERS: Box<[Cover]> = {

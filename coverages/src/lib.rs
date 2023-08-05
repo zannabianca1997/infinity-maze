@@ -10,6 +10,8 @@ use deepsize::DeepSizeOf;
 use flate2::Compression;
 use flate2::{bufread, read, write};
 
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub type Coord = u8;
 pub type Area = u16;
 

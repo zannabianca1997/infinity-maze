@@ -33,25 +33,25 @@ pub use config::Config;
 
 /// A maze generator
 #[derive(Debug, Clone)]
-pub struct Maze<RoomT> {
+pub struct Maze<RoomT, ConfigT> {
     /// General config for the maze
-    config: Arc<Config>,
+    config: Arc<ConfigT>,
     /// root submaze
-    root: OnceCell<SubMaze<RoomT>>,
+    root: OnceCell<SubMaze<RoomT, ConfigT>>,
 }
-impl<RoomT> Maze<RoomT> {
+impl<RoomT, ConfigT> Maze<RoomT, ConfigT> {
     /// Create a new maze with a given config
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: ConfigT) -> Self {
         Self {
             config: Arc::new(config),
             root: OnceCell::new(),
         }
     }
 }
-impl<RoomT> Maze<RoomT>
+impl<RoomT, ConfigT> Maze<RoomT, ConfigT>
 where
-    RoomT: Room + Send + Sync + 'static,
-    RoomT::Tile: Send,
+    RoomT: Room,
+    ConfigT: AsRef<Config> + AsRef<RoomT::Config>,
 {
     pub async fn draw(&self, rect: Rect, buf: &mut [RoomT::Tile]) {
         debug_assert_eq!(rect.linearized().map(|l| l.len()), Some(buf.len()));
@@ -59,8 +59,8 @@ where
             .get_or_init(|| async {
                 SubMaze::new(
                     Rect::MAX,
-                    WyRand::seed_from_u64(self.config.seed),
-                    self.config.clone(),
+                    WyRand::seed_from_u64(<ConfigT as AsRef<Config>>::as_ref(&self.config).seed),
+                    &self.config,
                     Default::default(),
                 )
             })
@@ -72,35 +72,30 @@ where
 
 /// A maze that covers a given domain
 #[derive(Debug, Clone)]
-struct SubMaze<RoomT> {
-    /// Content of the submaze
-    content: SubMazeContent<RoomT>,
-}
-
-#[derive(Debug, Clone)]
-enum SubMazeContent<RoomT> {
+enum SubMaze<RoomT, ConfigT> {
     Submazes {
         /// Domain of this maze
         domain: Rect,
         /// General config for the maze
-        config: Arc<Config>,
+        config: Arc<ConfigT>,
         /// Rectangles of the submazes
         rects: Box<[Rect]>,
         /// Doors of the submaze
         doors: Box<[Doors]>,
         /// Submazes
-        cells: Box<[OnceCell<SubMaze<RoomT>>]>,
+        cells: Box<[OnceCell<SubMaze<RoomT, ConfigT>>]>,
         /// Random number generator seed for this node
         seed: u64,
     },
     Room(RoomT),
 }
 
-impl<RoomT> SubMaze<RoomT>
+impl<RoomT, ConfigT> SubMaze<RoomT, ConfigT>
 where
-    RoomT: Room + 'static,
+    RoomT: Room,
+    ConfigT: AsRef<Config> + AsRef<RoomT::Config>,
 {
-    fn new(domain: Rect, mut rng: WyRand, config: Arc<Config>, upper_doors: Doors) -> Self {
+    fn new(domain: Rect, mut rng: WyRand, config: &Arc<ConfigT>, upper_doors: Doors) -> Self {
         debug_assert!(domain.maxx > domain.minx && domain.maxy > domain.miny);
         debug_assert!(upper_doors
             .top
@@ -118,11 +113,12 @@ where
             .right
             .iter()
             .all(|y| domain.miny <= *y && *y < domain.maxy));
+        let maze_config: &Config = config.as_ref().as_ref();
         // First: we need to split further?
         if domain.shape().into_iter().any(|s| s == 1)
-            || if config.room_size > 0. {
+            || if maze_config.room_size > 0. {
                 domain.linearized().is_some_and(|l| {
-                    let p = (-(l.len() as f64 / config.room_size)).exp();
+                    let p = (-(l.len() as f64 / maze_config.room_size)).exp();
                     rng.gen_bool(p)
                 })
             } else {
@@ -131,9 +127,7 @@ where
         {
             log::debug!("{domain:?}: Generating room.");
             // do not split further
-            return Self {
-                content: SubMazeContent::Room(RoomT::new(domain, upper_doors, &config, &mut rng)),
-            };
+            return SubMaze::Room(RoomT::new(domain, upper_doors, &config, rng));
         }
         // choosing a suitable cover
         let domain_aspect_ratio = domain.aspect_ratio();
@@ -150,7 +144,7 @@ where
                 // calculating resulting mean aspect ratio
                 let aspect_ratio = c.mean_aspect_ratio() + domain_aspect_ratio;
                 // weighting to target 0 (squarish rooms)
-                -(aspect_ratio * config.room_squaring_factor).powi(2)
+                -(aspect_ratio * maze_config.squaring_factor).powi(2)
             })
             .collect::<Box<[_]>>();
         let max_weight = *weights
@@ -303,26 +297,20 @@ where
         }
 
         log::trace!("{domain:?}: Initializing {} submazes", rects.len());
-        Self {
-            content: SubMazeContent::Submazes {
-                domain,
-                config,
-                seed: rng.gen(),
-                cells: repeat_with(OnceCell::new).take(rects.len()).collect(),
-                doors,
-                rects,
-            },
+        Self::Submazes {
+            domain,
+            config: config.clone(),
+            seed: rng.gen(),
+            cells: repeat_with(OnceCell::new).take(rects.len()).collect(),
+            doors,
+            rects,
         }
     }
 
-    #[async_recursion]
-    async fn draw(&self, rect: Rect, buf: &Mutex<&mut [RoomT::Tile]>)
-    where
-        RoomT: Send + Sync,
-        RoomT::Tile: Send,
-    {
-        match &self.content {
-            SubMazeContent::Submazes {
+    #[async_recursion(?Send)]
+    async fn draw(&self, rect: Rect, buf: &Mutex<&mut [RoomT::Tile]>) {
+        match &self {
+            SubMaze::Submazes {
                 domain,
                 config,
                 seed,
@@ -336,23 +324,18 @@ where
                     if r.collide(&rect) {
                         // this room need to be drawn
                         Some(async move {
-                            match cells[i]
-                                .get_or_try_init(move || {
-                                    let r = *r;
-                                    let doors = doors[i].clone();
-                                    let rng = WyRand::seed_from_u64(seed.wrapping_add(i as u64));
-                                    let config = config.clone();
-                                    // Only the new is spawned in a thread, to avoid messing with the &buf lifetime
-                                    tokio::spawn(async move { Self::new(r, rng, config, doors) })
+                            cells[i]
+                                .get_or_init(move || async move {
+                                    Self::new(
+                                        *r,
+                                        WyRand::seed_from_u64(seed.wrapping_add(i as u64)),
+                                        config,
+                                        doors[i].clone(),
+                                    )
                                 })
                                 .await
-                            {
-                                Ok(s) => s.draw(rect, buf).await,
-                                Err(err) => match err.try_into_panic() {
-                                    Ok(payload) => resume_unwind(payload),
-                                    Err(err) => panic!("Submaze generation thread failed: {err}"),
-                                },
-                            }
+                                .draw(rect, buf)
+                                .await
                         })
                     } else {
                         None
@@ -360,7 +343,7 @@ where
                 }))
                 .await;
             }
-            SubMazeContent::Room(room) => room.draw(rect, &mut *buf.lock().await),
+            SubMaze::Room(room) => room.draw(rect, &mut *buf.lock().await),
         }
     }
 }
@@ -474,11 +457,13 @@ impl Doors {
 /// Type of the maze rooms
 pub trait Room {
     type Tile;
+    type Config;
 
-    fn new<R>(domain: Rect, doors: Doors, config: &Arc<Config>, rng: &mut R) -> Self
+    fn new<R, C>(domain: Rect, doors: Doors, config: &Arc<C>, rng: R) -> Self
     where
         Self: Sized,
-        R: Rng + ?Sized;
+        R: Rng,
+        C: AsRef<Self::Config>;
 
     fn draw(&self, rect: Rect, buf: &mut [Self::Tile]);
 }

@@ -1,29 +1,27 @@
-use std::{fs::read_to_string, path::PathBuf};
+use std::{fs::read_to_string, path::PathBuf, sync::Arc};
 
 use anyhow::{bail, Context};
 use clap::Parser;
+use serde::Deserialize;
 use simple_logger::SimpleLogger;
 
-use maze::{config::PartialConfig, Config, Doors, Maze, Rect};
+use maze::{Config as MazeConfig, Doors, Maze, Rect};
 
 #[derive(Debug, Parser)]
 struct Args {
     /// Configuration file for the maze
-    #[clap(short = 'c', long = "config")]
-    file_config: Option<PathBuf>,
-    /// Overwrite configuration
-    #[clap(flatten)]
-    cli_config: PartialConfig,
+    #[clap(short)]
+    config: Option<PathBuf>,
     /// Rectangle to render
     #[clap(flatten)]
-    rect: RenderRect,
+    rect: ArgsRect,
     /// Output file
     #[clap(short, long)]
     output: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, Parser)]
-struct RenderRect {
+struct ArgsRect {
     /// Inclusive minimum bound on the x axis
     #[clap(short = 'x', long)]
     minx: i64,
@@ -37,14 +35,14 @@ struct RenderRect {
     #[clap(short = 'Y', long)]
     maxy: i64,
 }
-impl From<RenderRect> for Rect {
+impl From<ArgsRect> for Rect {
     fn from(
-        RenderRect {
+        ArgsRect {
             minx,
             maxx,
             miny,
             maxy,
-        }: RenderRect,
+        }: ArgsRect,
     ) -> Self {
         Self {
             minx,
@@ -55,28 +53,21 @@ impl From<RenderRect> for Rect {
     }
 }
 
-fn parse_args() -> anyhow::Result<(Config, Rect, PathBuf)> {
-    let Args {
-        file_config,
-        cli_config,
-        rect,
-        output,
-    } = Args::parse();
-    let config = if let Some(file_config) = file_config {
-        toml::from_str::<PartialConfig>(
-            &read_to_string(file_config).context("While reading config file")?,
-        )
-        .context("While parsing config file")?
-    } else {
-        Default::default()
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct Config {
+    maze: MazeConfig,
+    room: RoomConfig,
+}
+impl AsRef<MazeConfig> for Config {
+    fn as_ref(&self) -> &MazeConfig {
+        &self.maze
     }
-    .merge(cli_config)
-    .or_defaults();
-    let rect = Rect::from(rect);
-    if rect.linearized().is_none() {
-        bail!("The asked rectangle is too big to linearize!")
+}
+impl AsRef<RoomConfig> for Config {
+    fn as_ref(&self) -> &RoomConfig {
+        &self.room
     }
-    Ok((config, rect, output))
 }
 
 const TILE_SIZE: u32 = 10;
@@ -95,8 +86,24 @@ async fn main() -> anyhow::Result<()> {
         .env()
         .init()
         .context("While initializing logging")?;
-    let (config, rect, output) = parse_args().context("While loading configuration")?;
-    let maze = Maze::<Room>::new(config);
+
+    let Args {
+        config,
+        rect,
+        output,
+    } = Args::parse();
+    let rect = Rect::from(rect);
+    let config: Config = config
+        .map(|path| {
+            read_to_string(path)
+                .context("Cannot read config file")
+                .and_then(|s| toml::from_str(&s).context("Cannot parse config file"))
+        })
+        .transpose()
+        .context("While loading configs")?
+        .unwrap_or_default();
+
+    let maze = Maze::<Room, _>::new(config);
     let lin = rect.linearized().unwrap();
     let mut buf = vec![Tile::default(); lin.len()].into_boxed_slice();
     maze.draw(rect, &mut buf).await;
@@ -236,6 +243,18 @@ struct Tile {
     walls: Walls,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(default)]
+struct RoomConfig {
+    colors: bool,
+}
+
+impl Default for RoomConfig {
+    fn default() -> Self {
+        Self { colors: true }
+    }
+}
+
 struct Room {
     /// Room rectangle
     domain: Rect,
@@ -246,15 +265,21 @@ struct Room {
 }
 impl maze::Room for Room {
     type Tile = Tile;
+    type Config = RoomConfig;
 
-    fn new<R>(domain: Rect, doors: Doors, _config: &std::sync::Arc<Config>, rng: &mut R) -> Self
+    fn new<R, C>(domain: Rect, doors: Doors, config: &Arc<C>, mut rng: R) -> Self
     where
         Self: Sized,
-        R: rand::Rng + ?Sized,
+        R: rand::Rng,
+        C: AsRef<RoomConfig>,
     {
         Self {
             domain,
-            color: rng.gen(),
+            color: if config.as_ref().as_ref().colors {
+                rng.gen()
+            } else {
+                [255; 3]
+            },
             doors,
         }
     }

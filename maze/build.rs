@@ -31,7 +31,9 @@ fn covers(covers_size: u8) -> anyhow::Result<()> {
             covers.write(file).context("While writing covers")?;
             cargo_emit::rustc_env!("COVERS_FILE", "{}", outfile.display())
         }
-        Err(err) if err.kind() == ErrorKind::AlreadyExists => (),
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => {
+            cargo_emit::rustc_env!("COVERS_FILE", "{}", outfile.display())
+        }
         Err(err) => return Err(err).context("While opening covers file"),
     }
     Ok(())

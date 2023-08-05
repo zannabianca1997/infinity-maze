@@ -13,6 +13,10 @@ covers_size = 5
 name = "maze-show"
 required-features = ["simple_rooms"]
 
+[[test]]
+name = "coherency"
+required-features = ["simple_rooms"]
+
 [features]
 simple_rooms = ["dep:bitflags"]
 

@@ -1,5 +1,7 @@
+use serde::{Deserialize, Serialize};
+
 /// A rectangle
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Rect {
     pub minx: i64,
     pub miny: i64,

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use bitflags::bitflags;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{Doors, Rect};
 
@@ -26,17 +26,33 @@ bitflags! {
         const Right  = Self::BottomRightCorner.bits() | Self::RightWall.bits() | Self::TopRightCorner.bits();
     }
 }
+impl Serialize for Walls {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        todo!()
+    }
+}
+impl<'de> Deserialize<'de> for Walls {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        todo!()
+    }
+}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct Tile {
     pub color: [u8; 3],
     pub walls: Walls,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(default)]
 pub struct RoomConfig {
-    colors: bool,
+    pub colors: bool,
 }
 
 impl Default for RoomConfig {
@@ -44,6 +60,8 @@ impl Default for RoomConfig {
         Self { colors: true }
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 
 pub struct Room {
     /// Room rectangle

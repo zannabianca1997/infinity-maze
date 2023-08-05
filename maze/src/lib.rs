@@ -18,6 +18,7 @@ use rand::{
     Rng, SeedableRng,
 };
 use rand_wyrand::WyRand;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, OnceCell};
 
 mod rects;
@@ -69,6 +70,30 @@ where
             .await
             .draw(rect, &Mutex::new(buf))
             .await
+    }
+}
+
+impl<RoomT, ConfigT> Serialize for Maze<RoomT, ConfigT>
+where
+    ConfigT: Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Serialize only the config
+        self.config.serialize(serializer)
+    }
+}
+impl<'de, RoomT, ConfigT> Deserialize<'de> for Maze<RoomT, ConfigT>
+where
+    ConfigT: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        ConfigT::deserialize(deserializer).map(Self::new)
     }
 }
 

@@ -2,12 +2,19 @@
 name = "maze"
 version = "0.1.0"
 edition = "2021"
+
 [package.metadata]
 # Size of the covers to pre-generate
 # Raising it will make more complex structures possible
 # WARNING: setting it over 5 WILL get compilation times, executable sizes and running times exponentially bigger
 covers_size = 5
 
+[[example]]
+name = "maze-show"
+required-features = ["simple_rooms"]
+
+[features]
+simple_rooms = ["dep:bitflags"]
 
 [dependencies]
 async-recursion = "1.0.4"
@@ -19,13 +26,13 @@ rand = { version = "0.8.5", features = ["log", "serde", "alloc"] }
 rand-wyrand = { version = "0.1.0" }
 serde = { version = "1.0.179", features = ["derive"] }
 tokio = { version = "1.29.1", features = ["sync"] }
+bitflags = { version = "2.3.3", optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.72"
 image = "0.24.6"
 simple_logger = "4.2.0"
 toml = "0.7.6"
-bitflags = "2.3.3"
 clap = { version = "4.3.19", features = ["derive"] }
 
 [build-dependencies]

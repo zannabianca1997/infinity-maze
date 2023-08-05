@@ -30,6 +30,9 @@ mod covers;
 pub mod config;
 pub use config::Config;
 
+#[cfg(feature = "simple_rooms")]
+pub mod simple_rooms;
+
 /// A maze generator
 #[derive(Debug, Clone)]
 pub struct Maze<RoomT, ConfigT> {
